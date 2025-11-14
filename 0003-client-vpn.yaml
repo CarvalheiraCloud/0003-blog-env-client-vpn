@@ -12,18 +12,6 @@ Parameters:
     Default: 'MyVpnTest'
     Description: Environment name for resource naming
 
-  AmazonLinuxAmiId:
-    Type: String
-    Default: "ami-05b10e08d247fb927"
-
-  InstanceTypeParameter: 
-    Type: String
-    Default: "t2.micro"
-
-  MyTestPassword:
-    Type: String  
-    Default: "C@rvalh31r!Lab951"
-
 Resources:
   # VPC
   MyVpnTestVPC:
@@ -166,53 +154,6 @@ Resources:
       VpcId: !Ref MyVpnTestVPC
       DhcpOptionsId: !Ref DHCPOptions
 
-  NewKeyPair:
-    Type: 'AWS::EC2::KeyPair'
-    Properties:
-      KeyName: ClientVpnKeyPair
-     
-  PrivateInstance:
-    Type: AWS::EC2::Instance
-    Properties: 
-      ImageId: !Ref AmazonLinuxAmiId    
-      InstanceType: !Ref InstanceTypeParameter
-      SubnetId: !Ref PrivateSubnetA
-      KeyName: !Ref NewKeyPair
-      SecurityGroupIds: 
-        - !Ref DefaultSecurityGroup
-      PrivateIpAddress : "10.120.0.13"
-      BlockDeviceMappings:
-        - DeviceName: /dev/xvda
-          Ebs:
-            VolumeType: gp3
-            VolumeSize: '20'
-            DeleteOnTermination: 'true'
-            Encrypted: 'true'
-      Tags: 
-        - Key: "Name"
-          Value: "Carvalheira.Cloud - Test Instance"      
-
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          USERNAME="userlab"
-          PASSWORD="${MyTestPassword}"
-          useradd -m -s /bin/bash $USERNAME
-          echo -e "$PASSWORD\n$PASSWORD" | sudo passwd $USERNAME
-          echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME
-          chmod 440 /etc/sudoers.d/$USERNAME
-          visudo -cf /etc/sudoers.d/$USERNAME
-          systemctl restart sshd
-          sed -i '/^PermitRootLogin/s/no/yes/' /etc/ssh/sshd_config
-          sed -i '/^PasswordAuthentication/s/no/yes/' /etc/ssh/sshd_config
-          systemctl restart sshd   
-          #ssmAgent
-          cd /tmp
-          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
-          systemctl enable amazon-ssm-agent
-          systemctl start amazon-ssm-agent       
-          # turnOff
-          shutdown -h now
 
 Outputs:
   VPCId:
