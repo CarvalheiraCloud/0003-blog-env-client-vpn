@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to create MyVpnTest-vpc VPC with subnets, route tables, and related features'
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: '10.120.0.0/22'
+    Description: CIDR block for the VPC
+    
+  Environment:
+    Type: String
+    Default: 'MyVpnTest'
+    Description: Environment name for resource naming
+
+  AmazonLinuxAmiId:
+    Type: String
+    Default: "ami-05b10e08d247fb927"
+
+  InstanceTypeParameter: 
+    Type: String
+    Default: "t2.micro"
+
+  MyTestPassword:
+    Type: String  
+    Default: "C@rvalh31r!Lab951"
+
+Resources:
+  # VPC
+  MyVpnTestVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-vpc'
+
+  # Subnets
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVpnTestVPC
+      CidrBlock: '10.120.0.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-PV-subnet-A'
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVpnTestVPC
+      CidrBlock: '10.120.1.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-PV-subnet-B'
+
+  ClientVpnSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVpnTestVPC
+      CidrBlock: '10.120.2.0/26'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-PV-subnet-client-vpn-A'
+
+  ClientVpnSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVpnTestVPC
+      CidrBlock: '10.120.2.64/26'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-PV-subnet-client-vpn-B'
+
+  # Route Tables
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVpnTestVPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-private-route-table'
+
+  # Route Table Associations
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  ClientVpnSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ClientVpnSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  ClientVpnSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ClientVpnSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Group (created without self-referencing rule first)
+  DefaultSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Default security group for MyVpnTest VPC
+      VpcId: !Ref MyVpnTestVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-default-sg'
+
+  # Self-referencing ingress rule added separately to avoid circular dependency
+  DefaultSecurityGroupSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DefaultSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref DefaultSecurityGroup
+      Description: Allow all traffic from same security group
+
+  # VPC Endpoint for S3 (optional, for private connectivity)
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref MyVpnTestVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  # DHCP Options Set (using default AWS DHCP options)
+  DHCPOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: !Sub '${AWS::Region}.compute.internal'
+      DomainNameServers:
+        - AmazonProvidedDNS
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-dhcp-options'
+
+  DHCPOptionsAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId: !Ref MyVpnTestVPC
+      DhcpOptionsId: !Ref DHCPOptions
+
+  NewKeyPair:
+    Type: 'AWS::EC2::KeyPair'
+    Properties:
+      KeyName: ClientVpnKeyPair
+     
+  PrivateInstance:
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: !Ref AmazonLinuxAmiId    
+      InstanceType: !Ref InstanceTypeParameter
+      SubnetId: !Ref PrivateSubnetA
+      KeyName: !Ref NewKeyPair
+      SecurityGroupIds: 
+        - !Ref DefaultSecurityGroup
+      PrivateIpAddress : "10.120.0.13"
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '20'
+            DeleteOnTermination: 'true'
+            Encrypted: 'true'
+      Tags: 
+        - Key: "Name"
+          Value: "Carvalheira.Cloud - Test Instance"      
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          USERNAME="userlab"
+          PASSWORD="${MyTestPassword}"
+          useradd -m -s /bin/bash $USERNAME
+          echo -e "$PASSWORD\n$PASSWORD" | sudo passwd $USERNAME
+          echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME
+          chmod 440 /etc/sudoers.d/$USERNAME
+          visudo -cf /etc/sudoers.d/$USERNAME
+          systemctl restart sshd
+          sed -i '/^PermitRootLogin/s/no/yes/' /etc/ssh/sshd_config
+          sed -i '/^PasswordAuthentication/s/no/yes/' /etc/ssh/sshd_config
+          systemctl restart sshd   
+          #ssmAgent
+          cd /tmp
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent       
+          # turnOff
+          shutdown -h now
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref MyVpnTestVPC
+    Export:
+      Name: !Sub '${Environment}-VPC-ID'
+
+  VPCCidr:
+    Description: VPC CIDR Block
+    Value: !GetAtt MyVpnTestVPC.CidrBlock
+    Export:
+      Name: !Sub '${Environment}-VPC-CIDR'
+
+  PrivateSubnetA:
+    Description: Private Subnet A ID
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub '${Environment}-PrivateSubnetA-ID'
+
+  PrivateSubnetB:
+    Description: Private Subnet B ID
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: !Sub '${Environment}-PrivateSubnetB-ID'
+
+  ClientVpnSubnetA:
+    Description: Client VPN Subnet A ID
+    Value: !Ref ClientVpnSubnetA
+    Export:
+      Name: !Sub '${Environment}-ClientVpnSubnetA-ID'
+
+  ClientVpnSubnetB:
+    Description: Client VPN Subnet B ID
+    Value: !Ref ClientVpnSubnetB
+    Export:
+      Name: !Sub '${Environment}-ClientVpnSubnetB-ID'
+
+  DefaultSecurityGroup:
+    Description: Default Security Group ID
+    Value: !Ref DefaultSecurityGroup
+    Export:
+      Name: !Sub '${Environment}-DefaultSG-ID'
+
+  PrivateRouteTable:
+    Description: Private Route Table ID
+    Value: !Ref PrivateRouteTable
+    Export:
+      Name: !Sub '${Environment}-PrivateRouteTable-ID'
+
